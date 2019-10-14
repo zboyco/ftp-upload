@@ -62,7 +62,7 @@ func init() {
 func main() {
 	var err error
 	var interval int
-	flag.IntVar(&interval, "s", 30, "上传时间区间（秒），默认上传30秒内修改的文件,为0上传所有文件")
+	flag.IntVar(&interval, "s", 300, "上传时间区间（秒），默认上传300秒内修改的文件,为0上传所有文件")
 	flag.Parse()
 	if interval != 0 {
 		timeLine = time.Now().Add(-time.Duration(interval) * time.Second)
