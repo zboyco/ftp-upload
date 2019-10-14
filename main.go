@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-ini/ini"
@@ -29,11 +29,23 @@ var cfg *ini.File
 
 var c *ftp.ServerConn
 
+var ch chan *ftpCmd
+
+type ftpCmd struct {
+	Type      int
+	LocalPath string
+}
+
+var totalCount int
+var currentCount int
+var wg sync.WaitGroup
+
 func init() {
 	var err error
 	cfg, err = ini.Load("ftp.ini")
 	if err != nil {
-		log.Panicln("配置加载失败:", err)
+		fmt.Println("配置加载失败:", err)
+		return
 	}
 	// 将读操作提升大约 50-70% 的性能
 	cfg.BlockMode = false
@@ -45,36 +57,62 @@ func main() {
 	var err error
 	c, err = ftp.Dial(fmt.Sprintf("%s:%d", ftpSetting.Host, ftpSetting.Port), ftp.DialWithTimeout(30*time.Second))
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("FTP连接失败:", err)
+		return
 	}
-
+	fmt.Println("FTP连接成功...")
 	err = c.Login(ftpSetting.Username, ftpSetting.Password)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("FTP登录失败:", err)
+		return
+	}
+	fmt.Println("FTP登录成功...")
+	wg.Add(1)
+	go work()
+
+	ch = make(chan *ftpCmd, 1000)
+	fmt.Println("上传开始...")
+	err = uploadAllFiles(ftpSetting.LocalPath)
+	close(ch)
+	if err != nil {
+		fmt.Println("文件上传失败:", err)
+		return
 	}
 
-	err = uploadAllFiles(ftpSetting.LocalPath)
-	if err != nil {
-		log.Panic(err)
-	}
+	wg.Wait()
 
 	if err := c.Quit(); err != nil {
-		log.Fatal(err)
+		fmt.Println("FTP登出失败:", err)
+		return
 	}
+	fmt.Println("\n上传完成！！！")
 }
 
-func upload(loachPath, fileName string) error {
-	data, err := os.Open(loachPath)
-	if err != nil {
-		return err
+func work() {
+	defer wg.Done()
+	for {
+		cmd, ok := <-ch
+		if !ok {
+			return
+		}
+		if cmd.Type == 0 {
+			makeDir(cmd.LocalPath)
+			continue
+		}
+		currentCount++
+		data, err := os.Open(cmd.LocalPath)
+		if err != nil {
+			panic(err)
+		}
+		remotePath := strings.Replace(cmd.LocalPath, ftpSetting.LocalPath, ftpSetting.RemotePath, 1)
+
+		err = c.Stor(remotePath, data)
+		if err != nil {
+			fmt.Println(cmd.LocalPath)
+			panic(err)
+		}
+		stdPrint()
 	}
-	remotePath := strings.Replace(loachPath, ftpSetting.LocalPath, ftpSetting.RemotePath, 1)
-	log.Println("Local:", loachPath, "   >>>>>>>>>   ", "Remote:", remotePath)
-	err = c.Stor(remotePath, data)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func makeDir(loachPath string) {
@@ -88,7 +126,10 @@ func uploadAllFiles(dirPth string) error {
 	if err != nil {
 		return err
 	}
-	makeDir(dirPth)
+	ch <- &ftpCmd{
+		Type:      0,
+		LocalPath: dirPth,
+	}
 	pathSep := "/"
 	for _, fi := range dirs {
 		path := fmt.Sprintf("%s%s%s", dirPth, pathSep, fi.Name())
@@ -98,11 +139,17 @@ func uploadAllFiles(dirPth string) error {
 				return err
 			}
 		} else {
-			err := upload(path, fi.Name())
-			if err != nil {
-				return err
+			ch <- &ftpCmd{
+				Type:      1,
+				LocalPath: path,
 			}
+			totalCount++
+			stdPrint()
 		}
 	}
 	return nil
+}
+
+func stdPrint() {
+	fmt.Print("\r上传进度:", fmt.Sprintf("%d/%d", currentCount, totalCount))
 }
