@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -31,14 +32,18 @@ var c *ftp.ServerConn
 
 var ch chan *ftpCmd
 
+var totalCount int
+
+var currentCount int
+
+var timeLine time.Time
+
+var wg sync.WaitGroup
+
 type ftpCmd struct {
 	Type      int
 	LocalPath string
 }
-
-var totalCount int
-var currentCount int
-var wg sync.WaitGroup
 
 func init() {
 	var err error
@@ -51,10 +56,17 @@ func init() {
 	cfg.BlockMode = false
 
 	cfg.Section("").MapTo(ftpSetting)
+	timeLine, _ = time.Parse("2006-01-02 15:04:05", "1975-01-1 00:00:00")
 }
 
 func main() {
 	var err error
+	var interval int
+	flag.IntVar(&interval, "s", 30, "上传时间区间（秒），默认上传30秒内修改的文件,为0上传所有文件")
+	flag.Parse()
+	if interval != 0 {
+		timeLine = time.Now().Add(-time.Duration(interval) * time.Second)
+	}
 	c, err = ftp.Dial(fmt.Sprintf("%s:%d", ftpSetting.Host, ftpSetting.Port), ftp.DialWithTimeout(30*time.Second))
 	if err != nil {
 		fmt.Println("FTP连接失败:", err)
@@ -75,17 +87,18 @@ func main() {
 	err = uploadAllFiles(ftpSetting.LocalPath)
 	close(ch)
 	if err != nil {
-		fmt.Println("文件上传失败:", err)
+		fmt.Println("\n文件上传失败:", err)
 		return
 	}
 
 	wg.Wait()
 
 	if err := c.Quit(); err != nil {
-		fmt.Println("FTP登出失败:", err)
+		fmt.Println("\nFTP登出失败:", err)
 		return
 	}
-	fmt.Println("\n上传完成！！！")
+	fmt.Println("\nFTP登出成功...")
+	fmt.Println("OK,上传完成...")
 }
 
 func work() {
@@ -139,15 +152,23 @@ func uploadAllFiles(dirPth string) error {
 				return err
 			}
 		} else {
-			ch <- &ftpCmd{
-				Type:      1,
-				LocalPath: path,
-			}
-			totalCount++
-			stdPrint()
+			checkFile(path, fi)
 		}
 	}
 	return nil
+}
+
+// checkFile 检查文件修改日期，在时间线之后即上传
+func checkFile(localPath string, file os.FileInfo) {
+	if file.ModTime().Before(timeLine) {
+		return
+	}
+	ch <- &ftpCmd{
+		Type:      1,
+		LocalPath: localPath,
+	}
+	totalCount++
+	stdPrint()
 }
 
 func stdPrint() {
