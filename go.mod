@@ -1,8 +1,13 @@
 module github.com/zboyco/ftp-upload
 
-go 1.14
+go 1.19
 
 require (
-	github.com/go-ini/ini v1.55.0
-	github.com/jlaffaye/ftp v0.0.0-20200331144919-d4caf6ffcab8
+	github.com/go-ini/ini v1.67.0
+	github.com/jlaffaye/ftp v0.1.0
+)
+
+require (
+	github.com/hashicorp/errwrap v1.1.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.1 // indirect
 )
